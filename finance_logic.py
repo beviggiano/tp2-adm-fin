@@ -11,43 +11,61 @@ def calcular_cronograma_price(
     prazo_meses: int, 
     taxa_adm_fixa: float = 0.0, 
     seguro_perc_anual: float = 0.0,
-    inflacao_anual: float = 0.0  # <-- MELHORIA 1: Inflação
+    inflacao_anual: float = 0.0  
 ) -> pd.DataFrame:
     """
-    Calcula o cronograma Price, incluindo CET e Valor Presente da Parcela.
+    Gera o Fluxo de Caixa pelo Sistema Francês de Amortização (Tabela Price).
+    
+    Características Financeiras:
+    1. Prestações (PMT) periódicas, iguais e sucessivas.
+    2. A Amortização é crescente e os Juros são decrescentes.
     """
+
+    # Conversão de Taxa Nominal Anual para Mensal (Convenção Linear, padrão bancário)
     taxa_mensal = taxa_anual / 12
     seguro_perc_mensal = seguro_perc_anual / 12
-    # MELHORIA 1: Cálculo da taxa de inflação mensal
+    
+    # Taxa Equivalente para Inflação (Cálculo de Juros Compostos para Valor Presente)
+    # Fórmula: (1 + i_anual)^(1/12) - 1
     taxa_inflacao_mensal = (1 + inflacao_anual)**(1/12) - 1 if inflacao_anual > 0 else 0.0
     
+    # Cálculo da Prestação Base (PMT) sem taxas acessórias
+    # Utiliza a fórmula da Anuidade Ordinária: PMT = PV * [ i / (1 - (1+i)^-n) ]
     if taxa_mensal > 0:
         pmt_base = npf.pmt(taxa_mensal, prazo_meses, -principal)
     else:
-        pmt_base = principal / prazo_meses
+        pmt_base = principal / prazo_meses # Caso raro de juros zero
 
     cronograma = []
     saldo_devedor = principal
 
+    # Iteração para construção do Fluxo de Caixa mensal
     for mes in range(1, prazo_meses + 1):
+        # 1. Juros são calculados sobre o Saldo Devedor ANTERIOR (J = SD * i)
         juros = saldo_devedor * taxa_mensal
         
+        # 2. Amortização é o que sobra da parcela após pagar os juros
         if taxa_mensal > 0:
             amortizacao = pmt_base - juros
         else:
             amortizacao = pmt_base
         
+        # 3. Cálculo de componentes do CET (Custo Efetivo Total)
         seguro_valor = saldo_devedor * seguro_perc_mensal
         parcela_total = pmt_base + taxa_adm_fixa + seguro_valor
         
+        # 4. Atualização do Saldo Devedor
         saldo_devedor -= amortizacao
         
+        # Tratamento de resíduo financeiro na última parcela (arredondamentos)
         if mes == prazo_meses and saldo_devedor > 0.01:
             amortizacao += saldo_devedor
-            parcela_total += saldo_devedor # Adiciona resíduo na última parcela
+            parcela_total += saldo_devedor
             saldo_devedor = 0.0
 
-        # MELHORIA 1: Cálculo do Valor Presente da Parcela
+        # Cálculo do Valor Presente (VP)
+        # Traz o fluxo futuro a valor presente descontando a inflação acumulada.
+        # VP = VF / (1 + taxa)^n
         vp_parcela = parcela_total / ((1 + taxa_inflacao_mensal) ** mes)
 
         cronograma.append({
@@ -58,7 +76,7 @@ def calcular_cronograma_price(
             "Seguro": seguro_valor,
             "Taxa Adm": taxa_adm_fixa,
             "Saldo Devedor": saldo_devedor,
-            "VP Parcela": vp_parcela  # <-- MELHORIA 1: Nova coluna
+            "VP Parcela": vp_parcela
         })
 
     return pd.DataFrame(cronograma)
@@ -72,8 +90,13 @@ def calcular_cronograma_sac(
     inflacao_anual: float = 0.0  # <-- MELHORIA 1: Inflação
 ) -> pd.DataFrame:
     """
-    Calcula o cronograma SAC, incluindo CET e Valor Presente da Parcela.
+    Gera o Fluxo de Caixa pelo Sistema de Amortização Constante (SAC).
+    
+    Características Financeiras:
+    1. Amortização é fixa mensalmente (Principal / Prazo).
+    2. A Prestação é decrescente ao longo do tempo.
     """
+
     taxa_mensal = taxa_anual / 12
     seguro_perc_mensal = seguro_perc_anual / 12
     taxa_inflacao_mensal = (1 + inflacao_anual)**(1/12) - 1 if inflacao_anual > 0 else 0.0
@@ -83,17 +106,19 @@ def calcular_cronograma_sac(
     saldo_devedor = principal
 
     for mes in range(1, prazo_meses + 1):
+        # Juros sobre o saldo devedor
         juros = saldo_devedor * taxa_mensal
         seguro_valor = saldo_devedor * seguro_perc_mensal
         
+        # A parcela é a soma da Amortização Fixa + Juros Variáveis + Taxas
         parcela_total = amortizacao_fixa + juros + taxa_adm_fixa + seguro_valor
         
+        # O Saldo Devedor cai de forma linear
         saldo_devedor -= amortizacao_fixa
         
         if mes == prazo_meses:
             saldo_devedor = 0.0
 
-        # MELHORIA 1: Cálculo do Valor Presente da Parcela
         vp_parcela = parcela_total / ((1 + taxa_inflacao_mensal) ** mes)
 
         cronograma.append({
@@ -104,7 +129,7 @@ def calcular_cronograma_sac(
             "Seguro": seguro_valor,
             "Taxa Adm": taxa_adm_fixa,
             "Saldo Devedor": saldo_devedor,
-            "VP Parcela": vp_parcela  # <-- MELHORIA 1: Nova coluna
+            "VP Parcela": vp_parcela  
         })
 
     return pd.DataFrame(cronograma)
@@ -120,12 +145,18 @@ def calcular_simulacao_extra(
     tipo_amort_extra: str = 'unico', 
     valor_extra: float = 0.0, 
     mes_inicio_extra: int = 1,
-    inflacao_anual: float = 0.0  # <-- MELHORIA 1: Inflação
+    inflacao_anual: float = 0.0 
 ) -> pd.DataFrame:
     """
-    Calcula um cronograma com amortizações extraordinárias (única ou recorrente),
-    incluindo o cálculo do Valor Presente (VP) da parcela.
+    Simula o impacto de Amortizações Extraordinárias no Fluxo de Caixa.
+    
+    Regra de Negócio:
+    Toda amortização extra deve abater diretamente o Saldo Devedor.
+    A partir daí, existem duas estratégias de recálculo:
+    A) Manter o prazo e reduzir o valor da parcela.
+    B) Manter a parcela (aproximadamente) e reduzir o prazo total (Economia máxima de juros).
     """
+
     taxa_mensal = taxa_anual / 12
     seguro_perc_mensal = seguro_perc_anual / 12
     taxa_inflacao_mensal = (1 + inflacao_anual)**(1/12) - 1 if inflacao_anual > 0 else 0.0
@@ -141,7 +172,8 @@ def calcular_simulacao_extra(
         amortizacao_base = principal / prazo_meses
 
     while saldo_devedor > 0.01 and mes_atual <= prazo_total_simulado:
-        # (Lógica de amortização extra e cálculo de parcela... omitida para brevidade, é a mesma de antes)
+        
+        # Verifica se há ocorrência de pagamento extra neste mês
         amortizacao_extra_mes = 0.0
         if valor_extra > 0:
             if tipo_amort_extra == 'unico' and mes_atual == mes_inicio_extra:
@@ -173,7 +205,6 @@ def calcular_simulacao_extra(
              parcela_total += saldo_devedor
              saldo_devedor = 0.0
 
-        # MELHORIA 1: Cálculo do Valor Presente da Parcela
         vp_parcela = parcela_total / ((1 + taxa_inflacao_mensal) ** mes_atual)
 
         cronograma.append({
@@ -184,10 +215,11 @@ def calcular_simulacao_extra(
             "Seguro": seguro_valor,
             "Taxa Adm": taxa_adm_fixa,
             "Saldo Devedor": saldo_devedor,
-            "VP Parcela": vp_parcela # <-- MELHORIA 1: Nova coluna
+            "VP Parcela": vp_parcela 
         })
 
-        # (Lógica de recálculo de prazo/parcela... omitida para brevidade, é a mesma de antes)
+        # --- RECÁLCULO DO FINANCIAMENTO ---
+        # Se houve amortização extra, o fluxo futuro muda. Recalculamos conforme a estratégia.
         if amortizacao_extra_mes > 0 and saldo_devedor > 0.01:
             prazo_restante = prazo_total_simulado - mes_atual
             
@@ -213,8 +245,12 @@ def calcular_investimento(
     prazo_meses: int
 ) -> Tuple[float, pd.DataFrame]:
     """
-    Calcula a evolução de um investimento com juros compostos.
+    Calcula o Valor Futuro (VF) de uma aplicação financeira.
+    Utilizado para Análise de Custo de Oportunidade.
+    
+    Fórmula: VF = VP * (1 + i)^n
     """
+
     if taxa_anual_liquida > 0:
         taxa_mensal = (1 + taxa_anual_liquida)**(1/12) - 1
     else:
@@ -236,7 +272,6 @@ def calcular_investimento(
     ganho_total = valor_acumulado - valor_inicial
     return ganho_total, pd.DataFrame(cronograma)
 
-# --- MELHORIA 2: NOVA FUNÇÃO "SOLVER" ---
 def encontrar_pagamento_meta(
     tipo_sistema: str, 
     principal: float, 
@@ -245,8 +280,8 @@ def encontrar_pagamento_meta(
     prazo_desejado_meses: int
 ) -> float:
     """
-    Calcula o valor extra MENSAL necessário (apenas amortização) para 
-    quitar um financiamento no prazo desejado.
+    Algoritmo de 'Goal Seeking' (Atingir Meta).
+    Calcula quanto de aporte extra mensal é necessário para reduzir o prazo 'X' para 'Y'.
     """
     
     # Se o prazo desejado for maior ou igual, não há pagamento extra
@@ -286,8 +321,10 @@ def encontrar_pagamento_meta(
 
 def convert_to_excel(dfs: Dict[str, pd.DataFrame]) -> BytesIO:
     """
-    Converte um dicionário de DataFrames para um arquivo Excel em memória.
+    Exportação de Relatórios.
+    Gera arquivo binário compatível com MS Excel (.xlsx) contendo múltiplas abas.
     """
+    
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         for sheet_name, df in dfs.items():

@@ -3,13 +3,15 @@ import pandas as pd
 from io import BytesIO
 
 # --- IMPORTAÇÃO MODULARIZADA ---
+# A lógica financeira pesada (fórmulas do SAC, Price, VPL) foi isolada no arquivo 'finance_logic.py'.
+# Isso mantém o código da interface (este arquivo) limpo e facilita a auditoria das fórmulas.
 from finance_logic import (
     calcular_cronograma_price,
     calcular_cronograma_sac,
     calcular_simulacao_extra,
     calcular_investimento,
     convert_to_excel,
-    encontrar_pagamento_meta  # <-- MELHORIA 2: Importa novo solver
+    encontrar_pagamento_meta  
 )
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -40,7 +42,7 @@ st.sidebar.header("Parâmetros do Financiamento")
 principal = st.sidebar.number_input(
     "Valor do Financiamento (R$)", 
     min_value=1000.0, value=100000.0, step=1000.0, format="%.2f"
-)
+) # ... (inputs de taxa e prazo)
 taxa_anual_perc = st.sidebar.slider(
     "Taxa de Juros Anual (%)", 
     min_value=0.0, max_value=30.0, value=10.0, step=0.1
@@ -51,6 +53,8 @@ prazo_meses = st.sidebar.slider(
 )
 
 st.sidebar.subheader("Custos Adicionais (CET)")
+# Inputs essenciais para o cálculo do Custo Efetivo Total (CET), 
+# permitindo simular cenários reais bancários que incluem taxas ocultas.
 taxa_adm_fixa = st.sidebar.number_input(
     "Taxa de Adm. Fixa (R$/mês)",
     min_value=0.0, value=25.0, step=1.0, format="%.2f"
@@ -60,8 +64,9 @@ seguro_perc_anual = st.sidebar.number_input(
     min_value=0.0, value=0.5, step=0.01, format="%.2f"
 )
 
-# --- MELHORIA 1: Input de Inflação ---
+# --- ANÁLISE MACROECONÔMICA ---
 st.sidebar.subheader("Análise de Inflação")
+# Permite trazer fluxos futuros a Valor Presente (VP) para análise de ganho real.
 inflacao_anual_perc = st.sidebar.number_input(
     "Inflação Anual Projetada (%)",
     min_value=0.0, value=4.5, step=0.1, format="%.1f",
@@ -124,6 +129,8 @@ with tab1:
     # --- MELHORIA 1: Métricas de Valor Presente ---
     with col3:
         st.subheader(f"Análise de Valor Presente")
+        # Aqui descontamos os fluxos de caixa futuros pela taxa de inflação projetada.
+        # Isso demonstra o "Custo Real" do financiamento, descontando a perda de poder de compra.
         st.markdown(f"(Inflação projetada: {inflacao_anual_perc:.1f}%)")
         
         # O "Total Pago em VP" é a soma de todas as parcelas trazidas a valor presente.
@@ -163,7 +170,9 @@ with tab1:
 # --- ABA 2: SIMULADOR DE AMORTIZAÇÃO EXTRA ---
 with tab2:
     st.header("Simulador de Amortização Extraordinária")
-    # (Inputs... sem alteração)
+    # Simula o impacto de um pagamento não previsto (ex: uso do FGTS ou 13º salário).
+    # O modelo recalcula toda a dívida subtraindo o valor extra diretamente do Saldo Devedor.
+    
     col_sim1, col_sim2 = st.columns(2)
     with col_sim1:
         tipo_sistema = st.radio("Sistema de Financiamento", ("Price", "SAC"), horizontal=True, key="tab2_sistema")
@@ -190,11 +199,12 @@ with tab2:
     if st.button("Executar Simulação"):
         df_original = df_price if tipo_sistema == 'Price' else df_sac
         
+        # Recalcula o fluxo de caixa a partir do mês do aporte extra
         df_simulado = calcular_simulacao_extra(
             tipo_sistema, principal, taxa_anual, prazo_meses, estrategia_val,
             taxa_adm_fixa, seguro_perc_anual_calc,
             tipo_amort_val, valor_extra, mes_inicio_extra,
-            inflacao_anual  # <-- MELHORIA 1: Passa inflação para a simulação
+            inflacao_anual
         )
         
         st.session_state['df_simulado'] = df_simulado
@@ -205,7 +215,7 @@ with tab2:
             'tipo_amort_extra': tipo_amort_val
         }
 
-    # (Exibição de resultados... sem alteração, omitida para brevidade)
+    # Exibição de resultados
     if 'df_simulado' in st.session_state:
         st.subheader("Resultados da Simulação")
         df_original = st.session_state['df_original_sim']
@@ -229,7 +239,10 @@ with tab2:
 # --- ABA 3: AMORTIZAR vs. INVESTIR? ---
 with tab3:
     st.header("Análise: Amortizar Dívida vs. Investir")
-    # (Nenhuma alteração nesta aba. A análise continua sendo nominal.)
+    # Comparativo de Custo de Oportunidade:
+    # Cenário A: Economia de Juros gerada pela amortização antecipada da dívida.
+    # Cenário B: Rendimento Líquido gerado pela aplicação do mesmo montante no mercado financeiro.
+
     if 'df_simulado' not in st.session_state:
         st.warning("Por favor, execute uma simulação na Aba 2 primeiro.")
     elif st.session_state['sim_params']['tipo_amort_extra'] != 'unico':
@@ -265,7 +278,7 @@ with tab3:
             st.line_chart(df_invest.set_index('Mês')['Valor Acumulado'])
 
 
-# --- MELHORIA 2: ABA 4: SIMULADOR DE META ---
+# --- ABA 4: SIMULADOR DE META ---
 with tab4:
     st.header("🎯 Simulador de Meta (Goal Seeking)")
     st.markdown("Quanto preciso pagar a mais *por mês* para quitar o financiamento mais cedo?")
